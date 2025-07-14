@@ -1,25 +1,45 @@
 import os
 import pickle
 import torchreid
-# import sys
 import cv2
 import numpy as np
-# import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import supervision as sv
 from ultralytics import YOLO
 from collections import deque
 from tqdm import tqdm
 
+
 class Tracker:
+    """
+    Tracker class that integrates YOLOv8 for detection,
+    ByteTrack for tracking, and TorchReID for re-identification
+    of players and the ball in football video sequences.
+    """
+
     def __init__(self, model_path):
+        """
+        Initialize the Tracker instance.
+
+        Args:
+            model_path (str): Path to the YOLOv8 model (.pt file).
+        """
         self.model = YOLO(model_path)
         self.tracker = sv.ByteTrack()
         self.extractor = torchreid.utils.FeatureExtractor(model_name='osnet_ain_x0_25', device='cuda')
-        self.reid_gallery = deque(maxlen=30)  # stores (global_id, embedding)
+        self.reid_gallery = deque(maxlen=30)
         self.global_id_counter = 0
 
     def detect_frames(self, frames):
+        """
+        Perform object detection on a batch of frames.
+
+        Args:
+            frames (List[np.ndarray]): List of input video frames.
+
+        Returns:
+            List[ultralytics.engine.results.Results]: YOLO detection results per frame.
+        """
         batch_size = 20
         detections = []
         for i in range(0, len(frames), batch_size):
@@ -31,7 +51,18 @@ class Tracker:
                                          read_from_stub=False,
                                          stub_path=r"stubs/tracks_with_global_ids.pkl",
                                          gallery_stub_path=r"stubs/gallery.pkl"):
+        """
+        Detect, track, and re-identify objects across a sequence of frames.
 
+        Args:
+            frames (List[np.ndarray]): List of video frames.
+            read_from_stub (bool): Whether to load cached results.
+            stub_path (str): Path to pickle file storing previous tracks.
+            gallery_stub_path (str): Path to pickle file storing previous gallery.
+
+        Returns:
+            List[List[dict]]: List of frame-wise object track dictionaries.
+        """
         tracks_with_global_ids = []
 
         def match_embedding_to_gallery(embedding, gallery, threshold):
@@ -56,32 +87,25 @@ class Tracker:
 
             return best_id if best_score >= threshold else None
 
-        # ──────── Load from stub if available ────────
         if read_from_stub and os.path.exists(stub_path) and os.path.exists(gallery_stub_path):
-            print("Loading tracks and gallery from stubs...")
             with open(stub_path, 'rb') as f1, open(gallery_stub_path, 'rb') as f2:
                 tracks_with_global_ids = pickle.load(f1)
                 self.reid_gallery = pickle.load(f2)
-
-                # Fix: extract current max global_id from the stored gallery
                 ids = [gid for gid, _ in self.reid_gallery]
                 self.global_id_counter = max(ids, default=-1) + 1
-
             return tracks_with_global_ids
 
-        # ──────── Run detection + tracking + re-identification ────────
         detections = self.detect_frames(frames)
 
         for frame_num, detection in tqdm(enumerate(detections), total=len(detections), desc="Tracking + ReID"):
             frame = frames[frame_num]
 
-            # Normalize class IDs
             boxes, scores, class_ids = [], [], []
             for i in range(len(detection.boxes)):
                 cls = int(detection.boxes.cls[i])
-                if cls in [1, 3]:  # goalkeeper or referee → player
+                if cls in [1, 3]:
                     cls = 2
-                if cls not in [0, 2]:  # keep only ball and player
+                if cls not in [0, 2]:
                     continue
                 boxes.append(detection.boxes.xyxy[i].tolist())
                 scores.append(float(detection.boxes.conf[i]))
@@ -97,7 +121,6 @@ class Tracker:
 
             track_id_to_embedding = {}
             frame_tracks = []
-
             frame_buffer = []
 
             for det in detections_with_tracks:
@@ -117,8 +140,6 @@ class Tracker:
                 if matched_id is None:
                     matched_id = self.global_id_counter
                     self.global_id_counter += 1
-                    print(f"[NEW ID] Assigned global_id: {matched_id}")
-
 
                 frame_tracks.append({
                     "track_id": track_id,
@@ -129,10 +150,9 @@ class Tracker:
 
             for gid, emb in frame_buffer:
                 self.reid_gallery.append((gid, emb))
-            
+
             tracks_with_global_ids.append(frame_tracks)
 
-        # ──────── Save both tracks and gallery ────────
         if stub_path:
             with open(stub_path, 'wb') as f1, open(gallery_stub_path, 'wb') as f2:
                 pickle.dump(tracks_with_global_ids, f1)
@@ -141,6 +161,17 @@ class Tracker:
         return tracks_with_global_ids
 
     def draw_tracks_with_global_ids(self, frames, tracks_with_global_ids, show_track_id=False):
+        """
+        Draw bounding boxes and global IDs (optionally local IDs) on frames.
+
+        Args:
+            frames (List[np.ndarray]): Original video frames.
+            tracks_with_global_ids (List[List[dict]]): Tracking results per frame.
+            show_track_id (bool): Whether to show local (ByteTrack) IDs alongside global ones.
+
+        Returns:
+            List[np.ndarray]: Annotated output frames.
+        """
         output_frames = []
 
         for i, frame in enumerate(frames):
@@ -153,10 +184,7 @@ class Tracker:
                 if show_track_id and 'track_id' in obj:
                     label += f' (LID: {obj["track_id"]})'
 
-                # Draw bounding box
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-                # Draw label
                 cv2.putText(frame, label, (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
