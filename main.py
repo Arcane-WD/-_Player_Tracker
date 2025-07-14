@@ -1,6 +1,6 @@
 import cv2
 from tracker import Tracker
-from utils import get_center_of_bbox, read_video, save_video
+from utils import read_video, save_video
 
 def main():
     video_path = 'videos/input/inputvid.mp4' 
