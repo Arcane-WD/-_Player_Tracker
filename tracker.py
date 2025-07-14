@@ -105,7 +105,7 @@ class Tracker:
                 cls = int(detection.boxes.cls[i])
                 if cls in [1, 3]:
                     cls = 2
-                if cls not in [0, 2]:
+                if cls != 2:
                     continue
                 boxes.append(detection.boxes.xyxy[i].tolist())
                 scores.append(float(detection.boxes.conf[i]))
