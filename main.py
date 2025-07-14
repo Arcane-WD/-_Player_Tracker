@@ -1,23 +1,18 @@
-from utils import read_video, save_video
 import cv2
-import numpy as np
-from ultralytics import YOLO
-import torch
+from tracker import Tracker
+from utils import get_center_of_bbox, read_video, save_video
+
 def main():
-    video_frames = read_video(r"videos/input/inputvid.mp4")
+    video_path = 'videos/input/inputvid.mp4' 
+    model_path = 'model/best.pt'  
+    output_path = 'videos/output/outputvid.avi  '
 
-    # Run video frames through model on gpu
-    model = YOLO(r"model/best.pt")
-    model.to(torch.device('cuda'))
+    frames = read_video(video_path)
+    tracker = Tracker(model_path)
+    tracks = tracker.get_object_tracks(frames, read_from_stub=True)
 
-    output_video_frames = []
-    for i, frames in enumerate(video_frames):
-        result = model.predict(frames, device='cuda', verbose=False)[0]
-        output_frame = result.plot()
-        output_video_frames.append(output_frame)
-        print(f"Frame {i+1} out of {len(video_frames)}")
+    output_frames = tracker.draw_tracks(frames, tracks)
+    save_video(output_frames, output_path)
 
-    #Save Video Frames
-    save_video(output_video_frames, "videos\output\outputvid.avi")
 if __name__ == "__main__":
     main()
